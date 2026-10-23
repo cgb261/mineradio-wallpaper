@@ -107,6 +107,7 @@ public class MainActivity extends Activity {
             return;
         }
         boolean granted = isNotificationAccessGranted();
+        MediaPoller.tick(this);
         StringBuilder sb = new StringBuilder();
         sb.append(granted ? "通知使用权：已开启" : "通知使用权：未开启（收不到播放信息）");
         if (granted) {

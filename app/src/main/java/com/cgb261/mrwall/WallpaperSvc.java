@@ -28,6 +28,7 @@ public class WallpaperSvc extends WallpaperService {
                 if (!visible) {
                     return;
                 }
+                MediaPoller.tick(WallpaperSvc.this);
                 long now = System.currentTimeMillis();
                 float dt = lastFrame == 0L ? 0.016f : (now - lastFrame) / 1000f;
                 lastFrame = now;
