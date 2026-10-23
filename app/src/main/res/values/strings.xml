@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MR 歌词壁纸</string>
+    <string name="wp_label">MR 歌词壁纸</string>
+    <string name="wp_desc">把正在播放的歌曲与 3D 歌词舞台搬到桌面背景，切歌自动切换。</string>
+</resources>
