@@ -42,9 +42,12 @@ public class WallpaperSvc extends WallpaperService {
                     canvas = holder.lockCanvas();
                     if (canvas != null) {
                         renderer.draw(canvas, dt);
+                    } else {
+                        android.util.Log.w("MRWALL", "lockCanvas returned null, visible=" + visible
+                                + " surfaceValid=" + holder.getSurface().isValid());
                     }
-                } catch (Throwable ignored) {
-                    // 壁纸 surface 被回收时会抛异常，忽略即可
+                } catch (Throwable t) {
+                    android.util.Log.w("MRWALL", "draw failed", t);
                 } finally {
                     if (canvas != null) {
                         try {
@@ -75,6 +78,7 @@ public class WallpaperSvc extends WallpaperService {
         @Override
         public void onVisibilityChanged(boolean isVisible) {
             visible = isVisible;
+            android.util.Log.i("MRWALL", "onVisibilityChanged visible=" + isVisible);
             if (handler == null) {
                 return;
             }
