@@ -69,6 +69,12 @@ public class MainActivity extends Activity {
         root.addView(status, lp(0, pad));
 
         setContentView(root);
+
+        try {
+            android.service.notification.NotificationListenerService.requestRebind(
+                    new ComponentName(this, NotifListener.class));
+        } catch (Throwable ignored) {
+        }
     }
 
     private void openWallpaperPicker() {
@@ -106,8 +112,34 @@ public class MainActivity extends Activity {
         if (granted) {
             String t = PlayerHolder.title;
             sb.append("\n当前：").append(TextUtils.isEmpty(t) ? "还没读到播放中的歌曲" : t);
+            sb.append("\n").append(probeSessions());
         }
         status.setText(sb.toString());
+    }
+
+    /** 直接探测一次系统媒体会话，把结果写到界面上，方便定位读不到歌的原因。 */
+    private String probeSessions() {
+        try {
+            android.media.session.MediaSessionManager msm =
+                    (android.media.session.MediaSessionManager)
+                            getSystemService(android.content.Context.MEDIA_SESSION_SERVICE);
+            ComponentName cn = new ComponentName(this, NotifListener.class);
+            java.util.List<android.media.session.MediaController> list = msm.getActiveSessions(cn);
+            if (list == null || list.isEmpty()) {
+                return "媒体会话：0 个";
+            }
+            android.media.session.MediaController c = list.get(0);
+            String t = "";
+            if (c.getMetadata() != null) {
+                CharSequence cs = c.getMetadata().getText(
+                        android.media.MediaMetadata.METADATA_KEY_TITLE);
+                t = cs == null ? "" : cs.toString();
+            }
+            return "媒体会话：" + list.size() + " 个 · " + c.getPackageName()
+                    + (t.isEmpty() ? "" : " · " + t);
+        } catch (Throwable e) {
+            return "媒体会话读取失败：" + e.getClass().getSimpleName();
+        }
     }
 
     private boolean isNotificationAccessGranted() {
