@@ -56,6 +56,13 @@ public class WallpaperSvc extends WallpaperService {
             }
         };
 
+        private void schedule() {
+            if (!visible || handler == null) {
+                return;
+            }
+            handler.postDelayed(frame, 16L);
+        }
+
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
