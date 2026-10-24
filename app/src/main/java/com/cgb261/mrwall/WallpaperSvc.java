@@ -93,8 +93,15 @@ public class WallpaperSvc extends WallpaperService {
         }
 
         @Override
+        public void onOffsetsChanged(float xOffset, float yOffset, float xOffsetStep,
+                                     float yOffsetStep, int xPixelOffset, int yPixelOffset) {
+            renderer.setScroll(xOffset, yOffset);
+        }
+
+        @Override
         public void onSurfaceChanged(SurfaceHolder holder, int format, int width, int height) {
             super.onSurfaceChanged(holder, format, width, height);
+            android.util.Log.i("MRWALL", "onSurfaceChanged " + width + "x" + height);
         }
 
         @Override

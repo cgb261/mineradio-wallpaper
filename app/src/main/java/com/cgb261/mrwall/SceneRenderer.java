@@ -1,9 +1,11 @@
 package com.cgb261.mrwall;
 
 import android.graphics.Bitmap;
+import android.graphics.Camera;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.RectF;
@@ -14,12 +16,14 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * 伪 3D 舞台：透视粒子云 + 封面光环 + 逐字高亮歌词。
- * 全部用 Canvas 绘制，能直接画进壁纸的 Surface。
+ * 伪 3D 舞台：
+ *  - 粒子球壳绕 Y 轴旋转 + 透视投影
+ *  - 歌词用 Camera 做真正的 3D 倾斜，当前句逐字高亮
+ *  - 桌面左右滑动（onOffsetsChanged）会带动场景旋转和歌词转向
  */
 public class SceneRenderer {
 
-    private static final int PARTICLES = 240;
+    private static final int PARTICLES = 260;
 
     private final float[] px = new float[PARTICLES];
     private final float[] py = new float[PARTICLES];
@@ -32,9 +36,12 @@ public class SceneRenderer {
     private final Paint coverPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint curPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint nextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint sidePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint smallPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF tmpRect = new RectF();
+
+    private final Camera camera = new Camera();
+    private final Matrix matrix = new Matrix();
 
     private int w = 1;
     private int h = 1;
@@ -43,13 +50,17 @@ public class SceneRenderer {
     private float energy = 0f;
     private int accentCur = 0xFF6E5CE6;
     private int accentTarget = 0xFF6E5CE6;
-    private float accentMix = 1f;
     private String lastTitle = "";
+
+    private float scrollRaw = 0.5f;
+    private float scroll = 0.5f;
+
+    private int lineIndex = -1;
+    private long lineChangedAt = 0L;
 
     public SceneRenderer() {
         Random rnd = new Random(20261023L);
         for (int i = 0; i < PARTICLES; i++) {
-            // 球壳内均匀撒点
             double u = rnd.nextDouble() * 2.0 - 1.0;
             double theta = rnd.nextDouble() * Math.PI * 2.0;
             double r = Math.cbrt(rnd.nextDouble());
@@ -63,8 +74,8 @@ public class SceneRenderer {
         Typeface tf = Typeface.create("sans-serif-medium", Typeface.NORMAL);
         curPaint.setTypeface(tf);
         curPaint.setTextAlign(Paint.Align.CENTER);
-        nextPaint.setTypeface(tf);
-        nextPaint.setTextAlign(Paint.Align.CENTER);
+        sidePaint.setTypeface(tf);
+        sidePaint.setTextAlign(Paint.Align.CENTER);
         smallPaint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         smallPaint.setTextAlign(Paint.Align.CENTER);
     }
@@ -74,13 +85,20 @@ public class SceneRenderer {
     }
 
     public void onPause() {
-        // 无状态需要清理
+    }
+
+    /** 桌面滑动时由 WallpaperService 回调，0..1。 */
+    public void setScroll(float xOffset, float yOffset) {
+        scrollRaw = Math.max(0f, Math.min(1f, xOffset));
     }
 
     public void draw(Canvas canvas, float dt) {
         w = Math.max(1, canvas.getWidth());
         h = Math.max(1, canvas.getHeight());
         t += dt;
+
+        scroll += (scrollRaw - scroll) * Math.min(1f, dt * 4.5f);
+        float parallax = scroll - 0.5f;
 
         accentTarget = PlayerHolder.accent;
         if (accentCur != accentTarget) {
@@ -90,19 +108,20 @@ public class SceneRenderer {
         String title = PlayerHolder.title;
         if (!title.equals(lastTitle)) {
             lastTitle = title;
-            energy = Math.max(energy, 0.85f);
+            energy = Math.max(energy, 0.9f);
         }
         energy = Math.max(0f, energy - dt * 0.55f);
         float pulse = 0.5f + 0.5f * (float) Math.sin(t * 2.1f);
-        float live = PlayerHolder.playing ? 1f : 0.25f;
+        float live = PlayerHolder.playing ? 1f : 0.3f;
         float amp = 0.35f + 0.65f * live;
 
-        drawBackground(canvas, pulse * 0.35f * amp + energy * 0.25f);
+        drawBackground(canvas, parallax, pulse * 0.35f * amp + energy * 0.25f);
 
         rot += dt * (0.12f + 0.35f * live + energy * 0.2f);
-        float cos = (float) Math.cos(rot);
-        float sin = (float) Math.sin(rot);
-        float cx = w * 0.5f;
+        float spin = rot + parallax * 2.4f;
+        float cos = (float) Math.cos(spin);
+        float sin = (float) Math.sin(spin);
+        float cx = w * 0.5f + parallax * w * 0.06f;
         float cy = h * 0.5f;
 
         dotPaint.setColor(accentCur);
@@ -122,18 +141,20 @@ public class SceneRenderer {
             canvas.drawCircle(sx, sy, radius, dotPaint);
         }
 
-        drawCoverRing(canvas, cx, cy - h * 0.16f, pulse * live);
-        drawLyrics(canvas, cx);
+        float ringY = cy - h * 0.19f + Math.abs(parallax) * h * 0.02f;
+        drawCoverRing(canvas, cx, ringY, pulse * live);
+        drawLyrics(canvas, parallax);
     }
 
-    private void drawBackground(Canvas canvas, float glow) {
+    private void drawBackground(Canvas canvas, float parallax, float glow) {
         int dark = blend(0xFF05050A, accentCur, 0.10f + 0.14f * glow);
         bgPaint.setShader(new LinearGradient(0, 0, 0, h, 0xFF05050A, dark, Shader.TileMode.CLAMP));
         canvas.drawRect(0, 0, w, h, bgPaint);
 
         int halo = blend(0xFF05050A, accentCur, 0.55f);
         halo = (halo & 0x00FFFFFF) | 0x55000000;
-        RadialGradient rg = new RadialGradient(w * 0.5f, h * 0.42f, Math.max(w, h) * 0.62f,
+        float hx = w * (0.5f + parallax * 0.12f);
+        RadialGradient rg = new RadialGradient(hx, h * 0.42f, Math.max(w, h) * 0.62f,
                 halo, 0x00000000, Shader.TileMode.CLAMP);
         bgPaint.setShader(rg);
         canvas.drawRect(0, 0, w, h, bgPaint);
@@ -143,13 +164,11 @@ public class SceneRenderer {
     private void drawCoverRing(Canvas canvas, float cx, float cy, float pulse) {
         float radius = Math.min(w, h) * 0.105f;
         Bitmap cover = PlayerHolder.cover;
-        float scale = 1f + pulse * 0.05f;
-        float r = radius * scale;
+        float r = radius * (1f + pulse * 0.05f);
 
-        int glowColor = (accentCur & 0x00FFFFFF) | 0x44000000;
         ringPaint.setStyle(Paint.Style.STROKE);
         ringPaint.setStrokeWidth(Math.max(2f, r * 0.05f));
-        ringPaint.setColor(glowColor);
+        ringPaint.setColor((accentCur & 0x00FFFFFF) | 0x44000000);
         canvas.drawCircle(cx, cy, r * 1.18f, ringPaint);
         ringPaint.setColor((accentCur & 0x00FFFFFF) | 0xAA000000);
         canvas.drawCircle(cx, cy, r, ringPaint);
@@ -165,22 +184,21 @@ public class SceneRenderer {
         }
     }
 
-    private void drawLyrics(Canvas canvas, float cx) {
+    private void drawLyrics(Canvas canvas, float parallax) {
         List<PlayerHolder.Line> lines = PlayerHolder.lines;
         String title = PlayerHolder.title;
-
-        float big = Math.min(w, h) * 0.058f;
-        float mid = big * 0.62f;
+        float big = Math.min(w, h) * 0.062f;
+        float baseY = h * 0.70f;
 
         if (title.isEmpty()) {
             smallPaint.setColor(0x88FFFFFF);
             smallPaint.setTextSize(big * 0.5f);
-            canvas.drawText("等待 Mineradio 播放…", cx, h * 0.62f, smallPaint);
+            canvas.drawText("等待 Mineradio 播放…", w * 0.5f, baseY, smallPaint);
             return;
         }
 
-        int index = -1;
         long pos = PlayerHolder.positionNow();
+        int index = -1;
         if (lines != null && !lines.isEmpty()) {
             for (int i = 0; i < lines.size(); i++) {
                 if (lines.get(i).timeMs <= pos) {
@@ -190,17 +208,24 @@ public class SceneRenderer {
                 }
             }
         }
+        if (index != lineIndex) {
+            lineIndex = index;
+            lineChangedAt = System.currentTimeMillis();
+        }
+        float enter = Math.min(1f, (System.currentTimeMillis() - lineChangedAt) / 340f);
+        float ease = 1f - (float) Math.pow(1f - enter, 3f);
+
+        float rotY = parallax * 30f;
+        float rotX = 7f + Math.abs(parallax) * 4f;
 
         if (index < 0) {
-            // 还没到第一句：显示歌名
-            smallPaint.setColor(0xCCFFFFFF);
-            smallPaint.setTextSize(big * 0.6f);
-            canvas.drawText(title, cx, h * 0.62f, smallPaint);
+            draw3dText(canvas, title, w * 0.5f, baseY - (1f - ease) * big * 0.5f,
+                    big * 0.62f, 220, rotX, rotY, 1f);
             if (!PlayerHolder.artist.isEmpty()) {
-                smallPaint.setColor(0x88FFFFFF);
-                smallPaint.setTextSize(mid * 0.7f);
-                canvas.drawText(PlayerHolder.artist, cx, h * 0.62f + big * 0.9f, smallPaint);
+                draw3dText(canvas, PlayerHolder.artist, w * 0.5f, baseY + big * 0.95f,
+                        big * 0.34f, 140, rotX, rotY, 1f);
             }
+            drawMeta(canvas, title);
             return;
         }
 
@@ -210,40 +235,76 @@ public class SceneRenderer {
         if (end <= start) {
             end = start + 3000L;
         }
-        float progress = (pos - start) / (float) (end - start);
-        progress = Math.max(0f, Math.min(1f, progress));
+        float progress = Math.max(0f, Math.min(1f, (pos - start) / (float) (end - start)));
 
-        // 上一句
-        if (index > 0) {
-            nextPaint.setColor(0x55FFFFFF);
-            nextPaint.setTextSize(mid);
-            canvas.drawText(lines.get(index - 1).text, cx, h * 0.66f - big * 1.45f, nextPaint);
+        // 远处：上两句、下一句，越远越小越淡
+        for (int d = -2; d <= 2; d++) {
+            if (d == 0) {
+                continue;
+            }
+            int i = index + d;
+            if (i < 0 || i >= lines.size()) {
+                continue;
+            }
+            float dist = Math.abs(d);
+            float scale = 1f - dist * 0.16f;
+            float y = baseY + d * big * (d > 0 ? 1.25f : 1.05f);
+            int alpha = (int) (150 * (1f - dist * 0.32f));
+            draw3dText(canvas, lines.get(i).text, w * 0.5f, y,
+                    big * scale, alpha, rotX, rotY * (1f - dist * 0.25f), 1f);
         }
 
-        // 当前句：先画暗底，再按进度裁出亮色
-        curPaint.setTextSize(big);
-        curPaint.setColor(0x59FFFFFF);
-        float baseY = h * 0.68f;
-        canvas.drawText(cur.text, cx, baseY, curPaint);
+        // 当前句：从下方滑入 + 逐字点亮
+        float cyCur = baseY + (1f - ease) * big * 1.1f;
+        draw3dText(canvas, cur.text, w * 0.5f, cyCur, big, 255, rotX, rotY, progress);
 
-        float tw = curPaint.measureText(cur.text);
-        float left = cx - tw * 0.5f;
+        drawMeta(canvas, title);
+    }
+
+    /**
+     * 用 Camera 做 3D 倾斜后绘制一行字；highlight 0..1 表示从左到右点亮。
+     */
+    private void draw3dText(Canvas canvas, String text, float cx, float baseline,
+                            float size, int alpha, float rotX, float rotY, float highlight) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        Paint paint = alpha >= 200 ? curPaint : sidePaint;
+        paint.setTextSize(size);
+        paint.setColor((alpha << 24) | 0x00FFFFFF);
+
+        matrix.reset();
+        camera.save();
+        camera.rotateX(rotX);
+        camera.rotateY(rotY);
+        camera.getMatrix(matrix);
+        camera.restore();
+        matrix.preTranslate(-cx, -baseline);
+        matrix.postTranslate(cx, baseline);
+
         canvas.save();
-        canvas.clipRect(left, baseY - big * 1.4f, left + tw * progress, baseY + big * 0.5f);
-        curPaint.setColor(0xFFFFFFFF);
-        canvas.drawText(cur.text, cx, baseY, curPaint);
-        canvas.restore();
+        canvas.concat(matrix);
+        canvas.drawText(text, cx, baseline, paint);
 
-        // 下一句
-        if (index + 1 < lines.size()) {
-            nextPaint.setColor(0x66FFFFFF);
-            nextPaint.setTextSize(mid);
-            canvas.drawText(lines.get(index + 1).text, cx, baseY + big * 1.55f, nextPaint);
+        if (highlight < 1f && highlight > 0f) {
+            float tw = paint.measureText(text);
+            float left = cx - tw * 0.5f;
+            canvas.save();
+            canvas.clipRect(left, baseline - size * 1.5f, left + tw * highlight, baseline + size * 0.6f);
+            paint.setColor(0xFFFFFFFF);
+            canvas.drawText(text, cx, baseline, paint);
+            canvas.restore();
+        } else if (highlight >= 1f) {
+            paint.setColor(0xEEFFFFFF);
+            canvas.drawText(text, cx, baseline, paint);
         }
+        canvas.restore();
+    }
 
-        // 左下角：歌名 · 歌手
-        smallPaint.setTextSize(mid * 0.55f);
-        smallPaint.setColor(0x77FFFFFF);
+    private void drawMeta(Canvas canvas, String title) {
+        float size = Math.min(w, h) * 0.026f;
+        smallPaint.setTextSize(size);
+        smallPaint.setColor(0x88FFFFFF);
         smallPaint.setTextAlign(Paint.Align.LEFT);
         String meta = PlayerHolder.artist.isEmpty() ? title : title + "  ·  " + PlayerHolder.artist;
         canvas.drawText(meta, w * 0.06f, h * 0.94f, smallPaint);
